@@ -1,6 +1,6 @@
 # Project plan
 
-Status: proposed. No pipeline code has been written yet.
+Status: Step 1 (ingestion) is built and tested locally against the real CMS files. The first BigQuery load has not been run yet.
 
 ## Goal
 
@@ -77,11 +77,11 @@ If time runs short, cut in this order. Tests and docs are never cut.
 
 ## Spikes to run first
 
-These can only be answered inside a real BigQuery project, and each one can change the design.
+Each of these can change the design.
 
-1. **Old-date partitions.** Create a small table partitioned by date, load 2008 rows, and check whether they survive. If they disappear, use the integer-range design in D2.
-2. **2010 beneficiary file.** The CMS Sample 1 page links to a file named `sample_20`. Compare its member IDs with the 2009 Sample 1 file before loading it. See D8.
-3. **Data volume.** Measure uncompressed size and bytes scanned per rebuild, then confirm the sampling rate in D7.
+1. **Old-date partitions (open).** Create a small table partitioned by date, load 2008 rows, and check whether they survive. If they disappear, use the integer-range design in D2. This needs a real BigQuery project.
+2. **2010 beneficiary file (resolved).** The CMS link is named `sample_20`, but the archive contains `DE1_0_2010_Beneficiary_Summary_File_Sample_1.csv`. All 112,754 of its members also appear in the 2009 Sample 1 file, so it is safe to load.
+3. **Data volume (partly resolved).** Sample 1 is 11,494,963 rows and 3.12 GB uncompressed. The 10% sample keeps 1,152,481 rows. Bytes scanned per rebuild can only be measured once dbt runs.
 
 ## Decisions that change the original brief
 
@@ -93,8 +93,8 @@ These can only be answered inside a real BigQuery project, and each one can chan
 | D4 | Derive `fact_member_month` from yearly coverage month counts and document the assumption. Months are assigned from January forward and stop at death date. | SynPUF has total coverage months per year, not monthly enrollment flags. The "enrolled in month of service" rule is therefore approximate. |
 | D5 | Fact grain is one row per carrier line, and one row per claim segment for inpatient and outpatient. Allowed amount is null for inpatient and outpatient. | Only carrier has line-level paid and allowed amounts. Inpatient and outpatient have claim-level payment only, and allocating it would invent data. |
 | D6 | `dim_drug` holds the product code only. Generic vs brand is left out unless a public reference file is added later. | The drug events file has no drug name or brand flag. |
-| D7 | Keep a deterministic 10% sample of members, the same members in every file, pending spike 3. | It protects the 10 GiB storage limit and 1 TiB monthly query limit while keeping every member's claims complete. |
-| D8 | Treat the 2010 beneficiary file as unverified until spike 2 passes. | A wrong sample would break member joins for 2010. |
+| D7 | Keep a deterministic 10% sample of members, the same members in every file. Revisit the rate after measuring bytes scanned per rebuild. | It protects the 10 GiB storage limit and 1 TiB monthly query limit while keeping every member's claims complete. |
+| D8 | Load the CMS `sample_20` link as the Sample 1 2010 beneficiary file. | Its contents were checked and match Sample 1 (spike 2). |
 | D9 | Load each source file to its own raw table with a replace-on-load job on BigQuery. Use a delete and `COPY` in one transaction on Snowflake. | Replace-on-load keeps re-runs idempotent without DML. |
 | D10 | Record every pipeline run in an append-only `_ingest_runs` table and point freshness checks at it. Reload raw tables before they reach 60 days. | Source files never change, so `_loaded_at` alone would look stale, and sandbox tables would otherwise expire. |
 | D11 | Use a Discord webhook for alerts and key-pair auth for Snowflake. | Both are free and keep passwords out of CI. |
