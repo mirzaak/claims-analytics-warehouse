@@ -1,0 +1,36 @@
+# Secrets
+.env
+*.pem
+*.p8
+*service-account*.json
+*credentials*.json
+dbt/profiles.yml
+
+# Downloaded data
+data/
+*.zip
+*.csv
+!dbt/seeds/*.csv
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+
+# Local tools
+.DS_Store
+.idea/
+.vscode/
+.claude/
+CLAUDE.md
