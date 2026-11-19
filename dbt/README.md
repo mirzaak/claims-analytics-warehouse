@@ -19,7 +19,7 @@ scripts/dbt.sh deps
 ## Build and test
 
 ```bash
-scripts/dbt.sh build --select "source:synpuf+"
+scripts/dbt.sh build
 ```
 
 ```bash
@@ -46,6 +46,56 @@ scripts/dbt.sh source freshness
 
 Repeated source columns, such as 10 diagnosis codes or 13 carrier lines, stay wide in staging with a `_n` suffix. Intermediate models unpivot them.
 
+## Star schema
+
+```mermaid
+erDiagram
+    dim_member ||--o{ fact_medical_claim_line : member_key
+    dim_member ||--o{ fact_pharmacy_claim : member_key
+    dim_member ||--o{ fact_member_month : member_key
+    dim_provider ||--o{ fact_medical_claim_line : provider_key
+    dim_diagnosis ||--o{ fact_medical_claim_line : diagnosis_key
+    dim_procedure ||--o{ fact_medical_claim_line : procedure_key
+    dim_drug ||--o{ fact_pharmacy_claim : drug_key
+    dim_date ||--o{ fact_medical_claim_line : service_from_date_key
+    dim_date ||--o{ fact_pharmacy_claim : fill_date_key
+    dim_date ||--o{ fact_member_month : month_date_key
+```
+
+| Table | Grain | Rows (Sample 1, 10%) |
+|---|---|---:|
+| `fact_medical_claim_line` | one claim line: carrier line, or inpatient/outpatient claim segment | 1,021,603 |
+| `fact_pharmacy_claim` | one prescription fill | 561,720 |
+| `fact_member_month` | one member, sample and calendar month of a coverage year | 409,584 |
+| `dim_member` | one member coverage version (SCD Type 2) | 22,527 |
+| `dim_provider` | one provider ID and type (institution or physician) | 229,035 |
+| `dim_diagnosis` | one ICD-9-CM diagnosis code | 11,440 |
+| `dim_procedure` | one procedure code and code system (HCPCS or ICD-9-CM) | 7,600 |
+| `dim_drug` | one National Drug Code | 196,585 |
+| `dim_date` | one calendar day, 2007 to 2011 | 1,827 |
+
+Dimension counts include the unknown row.
+
+Every dimension except `dim_member` has an unknown row (key `'-1'`, or `-1` for dates), so a missing code never drops a fact row.
+
+### Design choices
+
+| Choice | Why |
+|---|---|
+| SCD Type 2 member history from window functions, not `dbt snapshot` | The sandbox blocks DML, which snapshots need. The yearly files already hold the history, so gaps-and-islands rebuilds it deterministically on every run. |
+| Facts pick the member version valid on the service date | Cost analysis must use the coverage a member had at the time. If no version covers the date, the fact uses the latest version and sets `is_member_version_matched = false`. |
+| Institutional claims are one row per claim segment | SynPUF has no line-level payments for inpatient or outpatient claims, and splitting the claim payment across lines would invent data. |
+| Carrier lines unpivoted in one scan | A cross join with 13 line numbers reads the table once. A 13-way `UNION ALL` would read it 13 times and exceed the 2 GB query cap. |
+| `fact_medical_claim_line` partitioned by integer `service_year_month`, clustered by `member_key` | The sandbox deletes date partitions older than 60 days on load, so a date partition would lose every 2008 to 2010 row. An integer range keeps them. |
+| Enrollment months run from January forward | SynPUF only reports months of coverage per year. The assumption is documented in `fact_member_month`. |
+
+### What the build showed
+
+- **Paid amounts reconcile exactly.** Raw and fact totals match for carrier ($41,236,860), inpatient ($63,632,290), outpatient ($22,504,820) and pharmacy gross cost ($34,474,750).
+- **Member history:** 11,550 members have 22,527 versions. 3,994 have one version, 4,135 have two and 3,421 have three.
+- **Member version fallback:** 1,242 medical lines use the latest member version. 1,175 have no service date, and 67 are claims that start in December 2007, before the first coverage year.
+- **Partitions:** 37 monthly partitions (December 2007 to December 2010) plus a null partition holding the 1,175 lines without a service date.
+
 ## Tests
 
 | Check | Where | What it catches |
@@ -56,7 +106,9 @@ Repeated source columns, such as 10 diagnosis codes or 13 carrier lines, stay wi
 | Accepted values and ranges | beneficiaries | Unknown sex or race codes, coverage months outside 0 to 12. |
 | Freshness | `raw._ingest_runs` | No ingestion run in 26 hours (warn) or 50 hours (error). |
 
-The latest build passed 69 checks with 3 warnings. The warnings are real source issues, reported and kept rather than dropped:
+Star schema tests add primary keys on every fact and dimension, a relationship test for every fact foreign key, row-count checks between facts and their inputs, and two SCD Type 2 checks: one current version per member and no overlapping versions.
+
+The latest full build passed 135 checks with 3 warnings. The warnings are real source issues, reported and kept rather than dropped:
 
 | Warning | Rows |
 |---|---:|
@@ -69,8 +121,8 @@ Profiling also found 6 inpatient and 240 outpatient claims with negative payment
 ## Cost guardrails
 
 - `maximum_bytes_billed` in `profiles.yml` fails any query that would scan more than 2 GB.
-- A full staging build processed 121 MB and billed 1,017 MB. BigQuery bills at least 10 MB per query, so the 72 small test queries dominate the bill.
-- At one build a day, that is about 3% of the sandbox's 1 TiB monthly query allowance.
+- A full `dbt build` (18 models, 120 tests) processed 1,250 MB and billed 2,606 MB. BigQuery bills at least 10 MB per query, so the many small test queries add up.
+- At one build a day, that is about 78 GB a month, or 8% of the sandbox's 1 TiB monthly query allowance.
 
 ## Portability
 
