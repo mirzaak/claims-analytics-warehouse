@@ -1,0 +1,18 @@
+# Settings come from environment variables, so this file holds no secrets.
+# scripts/dbt.sh loads them from .env.
+claims_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: "{{ env_var('DBT_DATASET', 'dbt_dev') }}"
+      location: "{{ env_var('GCP_LOCATION', 'US') }}"
+      threads: 4
+      priority: interactive
+      job_execution_timeout_seconds: 600
+      job_retries: 2
+      # Any single query that would scan more than 2 GB fails instead of running.
+      maximum_bytes_billed: 2000000000

@@ -1,0 +1,28 @@
+name: claims_warehouse
+version: "0.1.0"
+config-version: 2
+profile: claims_warehouse
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # CMS samples loaded by ingestion. Add 2 after running `claims-ingest run --sample 2`
+  # and declaring its raw tables in models/staging/_synpuf__sources.yml.
+  synpuf_samples: [1]
+
+models:
+  claims_warehouse:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
