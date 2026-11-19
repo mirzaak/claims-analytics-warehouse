@@ -1,0 +1,89 @@
+version: 2
+
+models:
+  - name: mart_cost_pmpm
+    description: >
+      Grain: one row per calendar month, 2008 to 2010. Medical and pharmacy cost per member
+      per month, with the cost and member-month inputs for correct yearly rollups.
+    columns:
+      - name: year_month
+        data_tests: [unique, not_null]
+      - name: medical_member_months
+        data_tests: &positive_member_months
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: pharmacy_member_months
+        data_tests: *positive_member_months
+      - name: medical_pmpm
+        data_tests: [not_null]
+      - name: pharmacy_pmpm
+        data_tests: [not_null]
+
+  - name: mart_utilization
+    description: >
+      Grain: one row per calendar month, 2008 to 2010. Inpatient admissions, outpatient
+      visits and professional claims, with annualized rates per 1,000 members.
+    columns:
+      - name: year_month
+        data_tests: [unique, not_null]
+      - name: medical_member_months
+        data_tests: *positive_member_months
+      - name: admissions_per_1000
+        data_tests: [not_null]
+
+  - name: mart_top_diagnoses
+    description: >
+      Grain: one row per primary diagnosis on at least one medical claim line. Total paid,
+      claims and members, ranked by cost and by member count.
+    columns:
+      - name: diagnosis_key
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_diagnosis')
+                field: diagnosis_key
+      - name: member_count
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+
+  - name: mart_pharmacy_spend
+    description: >
+      Grain: one row per National Drug Code filled at least once. Fills, members and
+      spend, ranked by gross cost. No generic vs brand split, because SynPUF lacks it.
+    columns:
+      - name: drug_key
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_drug')
+                field: drug_key
+
+  - name: mart_high_cost_members
+    description: >
+      Grain: one row per member and plan year above the 95th percentile of total annual
+      cost (medical paid plus pharmacy plan paid) among members enrolled that year.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [member_id, synpuf_sample, plan_year]
+      - dbt_utils.expression_is_true:
+          name: mart_high_cost_members_above_95th_percentile
+          arguments:
+            expression: "cost_percentile > 0.95"
+    columns:
+      - name: member_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_member')
+                field: member_key
