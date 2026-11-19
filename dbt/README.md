@@ -96,6 +96,53 @@ Every dimension except `dim_member` has an unknown row (key `'-1'`, or `-1` for 
 - **Member version fallback:** 1,242 medical lines use the latest member version. 1,175 have no service date, and 67 are claims that start in December 2007, before the first coverage year.
 - **Partitions:** 37 monthly partitions (December 2007 to December 2010) plus a null partition holding the 1,175 lines without a service date.
 
+## Analytics marts
+
+Built only from the star schema, and read by the dashboard.
+
+| Mart | Grain | What it answers |
+|---|---|---|
+| `mart_cost_pmpm` | calendar month | Medical and pharmacy cost per member per month |
+| `mart_utilization` | calendar month | Inpatient admissions, outpatient visits and professional claims per 1,000 members |
+| `mart_top_diagnoses` | primary diagnosis | Total paid, claims and members, ranked by cost and by members |
+| `mart_pharmacy_spend` | National Drug Code | Fills, members and spend, ranked by gross cost |
+| `mart_high_cost_members` | member and plan year | Members above the 95th percentile of annual cost |
+
+PMPM and utilization marts keep their inputs (cost, counts and member months). Roll up to a year by summing inputs first, for example `sum(medical_paid_amount) / sum(medical_member_months)`, never by averaging monthly rates.
+
+### Definitions
+
+| Measure | Definition |
+|---|---|
+| Medical cost | Medicare paid amount on medical claim lines (`paid_amount`) |
+| Pharmacy cost | Plan paid: gross drug cost minus patient pay |
+| Member months | From `fact_member_month`: Part A or B months for medical, Part D months for pharmacy |
+| Admissions, visits | Distinct inpatient, outpatient or carrier claims, in the month the claim starts |
+| Per 1,000 | count / medical member months × 12,000 (annualized) |
+| High cost | `percent_rank` of total annual cost above 0.95 among members enrolled that year, including members with no claims |
+
+### Results (Sample 1, 10% of members)
+
+| Plan year | Medical PMPM | Pharmacy PMPM | Admissions per 1,000 | Outpatient visits per 1,000 |
+|---|---:|---:|---:|---:|
+| 2008 | $363.07 | $130.13 | 247.6 | 2,599.7 |
+| 2009 | $393.20 | $109.05 | 245.2 | 2,970.2 |
+| 2010 | $223.51 | $65.34 | 131.6 | 1,621.0 |
+
+| Plan year | High-cost members | Enrolled members | Threshold | Share of annual cost | Avg chronic conditions (all members) |
+|---|---:|---:|---:|---:|---:|
+| 2008 | 558 | 11,144 | $21,290 | 40% | 6.56 (2.23) |
+| 2009 | 544 | 10,880 | $21,410 | 33% | 6.18 (2.57) |
+| 2010 | 535 | 10,711 | $12,040 | 35% | 4.20 (1.79) |
+
+Top diagnoses by cost: coronary atherosclerosis (414.01), septicemia (038.9), rehabilitation (V57.89), pneumonia (486) and localized osteoarthritis of the lower leg (715.36).
+
+### Data caveats
+
+- **2010 is lower.** Claims starting in 2010 drop by about 40 to 50% against 2009 for every claim type, while enrollment stays flat. The drop is in the source files, not the models, so 2010 PMPM and utilization should not be read as a real trend.
+- **Drug-level spend is flat.** Sample 1 has 196,584 distinct NDCs, 70,500 of them filled once, and the top drugs tie. SynPUF scrambles drug detail, so `mart_pharmacy_spend` shows the mechanics, not real drug rankings.
+- **Code descriptions.** ICD-9 titles come from the CMS Version 32 files (`scripts/build_icd9_seeds.py`). Diagnoses with a title cover 97.3% of diagnosis-attributed cost. The 407 codes without one are mostly non-billable category codes, such as `0058`. All 600 five-character values in SynPUF's ICD-9 procedure fields lack titles, because real ICD-9-CM procedure codes have at most four digits. HCPCS codes have no titles, because CPT descriptions are copyrighted by the AMA.
+
 ## Tests
 
 | Check | Where | What it catches |
@@ -121,8 +168,8 @@ Profiling also found 6 inpatient and 240 outpatient claims with negative payment
 ## Cost guardrails
 
 - `maximum_bytes_billed` in `profiles.yml` fails any query that would scan more than 2 GB.
-- A full `dbt build` (18 models, 120 tests) processed 1,250 MB and billed 2,606 MB. BigQuery bills at least 10 MB per query, so the many small test queries add up.
-- At one build a day, that is about 78 GB a month, or 8% of the sandbox's 1 TiB monthly query allowance.
+- A full `dbt build` (23 models, 2 seeds, 148 tests) processed 1,678 MB and billed 3,351 MB. BigQuery bills at least 10 MB per query, so the many small test queries add up.
+- At one build a day, that is about 100 GB a month, or 10% of the sandbox's 1 TiB monthly query allowance.
 
 ## Portability
 

@@ -2,7 +2,7 @@
 
 An end-to-end ELT pipeline for synthetic healthcare claims, built on free tiers: Python ingestion, dbt models in a star schema, automated data quality tests, scheduled orchestration, failure alerts, and a BI dashboard.
 
-**Status:** in progress. [Ingestion](ingestion/README.md) loads Sample 1 into BigQuery, and [dbt](dbt/README.md) builds the staging layer and the star schema with all tests passing. Analytics marts, orchestration and the dashboard are next. See the [project plan](docs/PROJECT_PLAN.md).
+**Status:** in progress. [Ingestion](ingestion/README.md) loads Sample 1 into BigQuery, and [dbt](dbt/README.md) builds the staging layer, the star schema and five analytics marts with all tests passing. Data-quality rules, orchestration and the dashboard are next. See the [project plan](docs/PROJECT_PLAN.md).
 
 ## Data
 
