@@ -1,0 +1,64 @@
+version: 2
+
+sources:
+  - name: synpuf
+    description: >
+      CMS DE-SynPUF synthetic Medicare files, loaded unchanged by the ingestion package.
+      Every column is STRING. One table per source file and CMS sample.
+    database: "{{ env_var('GCP_PROJECT_ID') }}"
+    schema: "{{ env_var('RAW_DATASET', 'raw') }}"
+
+    tables:
+      - name: _ingest_runs
+        description: One row per file per ingestion run. Freshness is measured here.
+        config:
+          loaded_at_field: finished_at
+          freshness:
+            warn_after: {count: 26, period: hour}
+            error_after: {count: 50, period: hour}
+
+      - name: beneficiary_2008_s01
+        description: &beneficiary_description >
+          Beneficiary summary for one calendar year. One row per member alive and enrolled
+          at some point in that year.
+        data_tests: &beneficiary_tests
+          - columns_castable: {arguments: {pattern: '^BENE_(BIRTH|DEATH)_DT$', to: date}}
+          - columns_castable: {arguments: {pattern: '^(BENE_.*_TOT_MONS|PLAN_CVRG_MOS_NUM)$', to: integer}}
+          - columns_castable: {arguments: {pattern: '^(MEDREIMB|BENRES|PPPYMT)_', to: amount}}
+      - name: beneficiary_2009_s01
+        description: *beneficiary_description
+        data_tests: *beneficiary_tests
+      - name: beneficiary_2010_s01
+        description: *beneficiary_description
+        data_tests: *beneficiary_tests
+
+      - name: inpatient_claims_s01
+        description: Institutional inpatient claims, 2008 to 2010. One row per claim segment.
+        data_tests:
+          - columns_castable: {arguments: {pattern: '^(CLM_.*_DT|NCH_BENE_DSCHRG_DT)$', to: date}}
+          - columns_castable: {arguments: {pattern: '^CLM_UTLZTN_DAY_CNT$', to: integer}}
+          - columns_castable: {arguments: {pattern: '_(AMT|AM)$', to: amount}}
+
+      - name: outpatient_claims_s01
+        description: Institutional outpatient claims, 2008 to 2010. One row per claim segment.
+        data_tests:
+          - columns_castable: {arguments: {pattern: '^CLM_.*_DT$', to: date}}
+          - columns_castable: {arguments: {pattern: '_(AMT|AM)$', to: amount}}
+
+      - name: carrier_claims_a_s01
+        description: &carrier_description >
+          Professional (carrier) claims, 2008 to 2010, split by CMS into files A and B.
+          One row per claim with up to 13 repeated line columns.
+        data_tests: &carrier_tests
+          - columns_castable: {arguments: {pattern: '^CLM_.*_DT$', to: date}}
+          - columns_castable: {arguments: {pattern: '^LINE_.*_AMT_\d+$', to: amount}}
+      - name: carrier_claims_b_s01
+        description: *carrier_description
+        data_tests: *carrier_tests
+
+      - name: prescription_drug_events_s01
+        description: Part D prescription drug events, 2008 to 2010. One row per fill.
+        data_tests:
+          - columns_castable: {arguments: {pattern: '^SRVC_DT$', to: date}}
+          - columns_castable: {arguments: {pattern: '^DAYS_SUPLY_NUM$', to: integer}}
+          - columns_castable: {arguments: {pattern: '^(QTY_DSPNSD_NUM|PTNT_PAY_AMT|TOT_RX_CST_AMT)$', to: amount}}
