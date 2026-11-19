@@ -1,6 +1,8 @@
 # Project plan
 
-Status: Step 1 (ingestion) is built and tested locally against the real CMS files. The first BigQuery load has not been run yet.
+Status: Step 1 (ingestion) is complete. Sample 1 is loaded into BigQuery, and a second run loaded nothing new.
+
+Open question: the `claims-warehouse` project has billing enabled, so it is not the BigQuery sandbox. DML works and tables do not expire. Decisions D1, D2 and D10 assumed the sandbox and need a final choice.
 
 ## Goal
 
@@ -79,7 +81,7 @@ If time runs short, cut in this order. Tests and docs are never cut.
 
 Each of these can change the design.
 
-1. **Old-date partitions (open).** Create a small table partitioned by date, load 2008 rows, and check whether they survive. If they disappear, use the integer-range design in D2. This needs a real BigQuery project.
+1. **Old-date partitions (resolved for this project).** `scripts/check_partition_expiry.py` loaded 2008, 2009, 2010 and current dates into date-partitioned and integer-range tables. All rows survived, because this billing-enabled project sets no partition expiration. A sandbox project was not tested.
 2. **2010 beneficiary file (resolved).** The CMS link is named `sample_20`, but the archive contains `DE1_0_2010_Beneficiary_Summary_File_Sample_1.csv`. All 112,754 of its members also appear in the 2009 Sample 1 file, so it is safe to load.
 3. **Data volume (partly resolved).** Sample 1 is 11,494,963 rows and 3.12 GB uncompressed. The 10% sample keeps 1,152,481 rows. Bytes scanned per rebuild can only be measured once dbt runs.
 

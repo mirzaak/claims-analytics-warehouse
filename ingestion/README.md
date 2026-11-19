@@ -85,4 +85,9 @@ From a dry run at the 10% sample rate.
 cd ingestion && ../.venv/bin/pytest
 ```
 
-The BigQuery loader is tested against a fake client. A real load has not been run yet.
+The BigQuery loader is unit-tested against a fake client and verified with a real Sample 1 load:
+
+- All 8 tables matched the row counts the pipeline reported.
+- Beneficiary and drug event keys had no duplicates.
+- A second run skipped all 8 files and loaded nothing.
+- Raw storage in BigQuery at the 10% sample is 413.7 MB.
