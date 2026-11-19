@@ -1,0 +1,28 @@
+version: 2
+
+seeds:
+  - name: icd9_diagnosis_descriptions
+    description: >
+      ICD-9-CM diagnosis titles from CMS Version 32 (effective 2014-10-01, the final ICD-9
+      release). Built by scripts/build_icd9_seeds.py. Public domain.
+    config:
+      column_types:
+        diagnosis_code: string
+        short_description: string
+        long_description: string
+    columns:
+      - name: diagnosis_code
+        data_tests: [unique, not_null]
+
+  - name: icd9_procedure_descriptions
+    description: >
+      ICD-9-CM procedure titles from CMS Version 32. HCPCS and CPT titles are not included,
+      because CPT descriptions are copyrighted by the AMA.
+    config:
+      column_types:
+        procedure_code: string
+        short_description: string
+        long_description: string
+    columns:
+      - name: procedure_code
+        data_tests: [unique, not_null]

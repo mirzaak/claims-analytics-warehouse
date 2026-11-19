@@ -15,6 +15,10 @@ vars:
   # and declaring its raw tables in models/staging/_synpuf__sources.yml.
   synpuf_samples: [1]
 
+seeds:
+  claims_warehouse:
+    +schema: reference
+
 models:
   claims_warehouse:
     staging:
