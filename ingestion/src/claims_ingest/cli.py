@@ -58,7 +58,12 @@ def build_loader(settings: Settings) -> WarehouseLoader:
     if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
     try:
-        return BigQueryLoader(project, settings.gcp_location, settings.raw_dataset)
+        return BigQueryLoader(
+            project,
+            settings.gcp_location,
+            settings.raw_dataset,
+            expiration_days=settings.raw_expiration_days,
+        )
     except DefaultCredentialsError as exc:
         raise ConfigError(
             "Google credentials were not found. Set GOOGLE_APPLICATION_CREDENTIALS in .env "

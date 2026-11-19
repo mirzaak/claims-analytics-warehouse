@@ -28,9 +28,18 @@ class Settings:
     data_dir: Path = Path("data")
     member_sample_pct: int = 10
     refresh_days: int = 14
+    # The BigQuery sandbox rejects writes to tables that never expire. 0 means no expiry.
+    raw_expiration_days: int = 60
     gcp_project_id: str | None = None
     gcp_location: str = "US"
     raw_dataset: str = "raw"
+
+    def __post_init__(self) -> None:
+        if self.raw_expiration_days and self.refresh_days >= self.raw_expiration_days:
+            raise ConfigError(
+                f"RAW_REFRESH_DAYS ({self.refresh_days}) must be lower than "
+                f"RAW_EXPIRATION_DAYS ({self.raw_expiration_days})."
+            )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -39,6 +48,7 @@ class Settings:
             data_dir=Path((values.get("DATA_DIR") or "data").strip()),
             member_sample_pct=_int_setting(values, "MEMBER_SAMPLE_PCT", 10, 1, 100),
             refresh_days=_int_setting(values, "RAW_REFRESH_DAYS", 14, 1, 59),
+            raw_expiration_days=_int_setting(values, "RAW_EXPIRATION_DAYS", 60, 0, 60),
             gcp_project_id=(values.get("GCP_PROJECT_ID") or "").strip() or None,
             gcp_location=(values.get("GCP_LOCATION") or "US").strip(),
             raw_dataset=(values.get("RAW_DATASET") or "raw").strip(),

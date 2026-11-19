@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 import requests
 from google.api_core import exceptions as google_errors
@@ -21,6 +22,8 @@ BATCH_LABEL = "batch_id"
 RUNS_TABLE = "_ingest_runs"
 JOB_TIMEOUT_SECONDS = 1800
 RATE_LIMIT_REASONS = frozenset({"rateLimitExceeded", "backendError"})
+MS_PER_DAY = 86_400_000
+EXPIRATION_FIELDS = ("default_table_expiration_ms", "default_partition_expiration_ms")
 
 RUNS_SCHEMA = (
     bigquery.SchemaField("run_id", "STRING", mode="REQUIRED"),
@@ -76,17 +79,29 @@ class BigQueryLoader:
         location: str,
         dataset: str,
         *,
+        expiration_days: int | None = None,
         client: bigquery.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._client = client or bigquery.Client(project=project, location=location)
         self._project = project
         self._location = location
         self._dataset = dataset
+        self._expiration_days = expiration_days or None
         self._sleep = sleep
+        self._clock = clock
+
+    @property
+    def _dataset_id(self) -> str:
+        return f"{self._project}.{self._dataset}"
+
+    @property
+    def _expiration_ms(self) -> int | None:
+        return self._expiration_days * MS_PER_DAY if self._expiration_days else None
 
     def _table_id(self, table: str) -> str:
-        return f"{self._project}.{self._dataset}.{table}"
+        return f"{self._dataset_id}.{table}"
 
     def _retry(self, operation, description: str):
         return retry_call(
@@ -97,15 +112,58 @@ class BigQueryLoader:
         )
 
     def ensure_ready(self) -> None:
-        dataset = bigquery.Dataset(f"{self._project}.{self._dataset}")
+        """Create the dataset and make sure every table in it has an expiry.
+
+        The sandbox rejects writes to any table without one, including tables created
+        while the project had billing enabled.
+        """
+        dataset = bigquery.Dataset(self._dataset_id)
         dataset.location = self._location
+        if self._expiration_ms:
+            dataset.default_table_expiration_ms = self._expiration_ms
+            dataset.default_partition_expiration_ms = self._expiration_ms
         try:
-            self._retry(
+            found = self._retry(
                 lambda: self._client.create_dataset(dataset, exists_ok=True),
                 f"create dataset {self._dataset}",
             )
+            if self._expiration_ms:
+                self._apply_dataset_defaults(found)
+                self._apply_missing_table_expiry()
         except google_errors.GoogleAPICallError as exc:
             raise LoadError(f"Could not prepare dataset {self._dataset}: {exc}") from exc
+
+    def _apply_dataset_defaults(self, dataset: bigquery.Dataset) -> None:
+        fields = [field for field in EXPIRATION_FIELDS if getattr(dataset, field) is None]
+        if not fields:
+            return
+        for field in fields:
+            setattr(dataset, field, self._expiration_ms)
+        self._retry(
+            lambda: self._client.update_dataset(dataset, fields),
+            f"set expiry defaults on {self._dataset}",
+        )
+        logger.info("dataset_expiry_set dataset=%s days=%d", self._dataset, self._expiration_days)
+
+    def _apply_missing_table_expiry(self) -> None:
+        items = self._retry(
+            lambda: list(self._client.list_tables(self._dataset_id)),
+            f"list tables in {self._dataset}",
+        )
+        for item in items:
+            if item.expires is not None:
+                continue
+            table = self._retry(
+                lambda ref=item.reference: self._client.get_table(ref), f"read {item.table_id}"
+            )
+            table.expires = self._clock() + timedelta(days=self._expiration_days)
+            self._retry(
+                lambda current=table: self._client.update_table(current, ["expires"]),
+                f"set expiry on {item.table_id}",
+            )
+            logger.info(
+                "table_expiry_set table=%s expires=%s", item.table_id, table.expires.isoformat()
+            )
 
     def get_table_state(self, table: str) -> TableState | None:
         try:

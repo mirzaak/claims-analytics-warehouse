@@ -9,6 +9,7 @@ from google.api_core import exceptions as google_errors
 from google.cloud import bigquery
 
 from claims_ingest.bigquery_loader import (
+    EXPIRATION_FIELDS,
     BigQueryLoader,
     build_schema,
     is_transient_bigquery_error,
@@ -39,9 +40,25 @@ class FakeClient:
         self.json_loads: list[tuple[list[dict], str, bigquery.LoadJobConfig]] = []
         self.deleted: list[str] = []
         self.datasets: list[bigquery.Dataset] = []
+        self.existing_dataset: bigquery.Dataset | None = None
+        self.dataset_updates: list[list[str]] = []
+        self.table_updates: list[tuple[str, list[str]]] = []
 
     def create_dataset(self, dataset, exists_ok=False):
         self.datasets.append(dataset)
+        return self.existing_dataset or dataset
+
+    def update_dataset(self, dataset, fields):
+        self.dataset_updates.append(fields)
+        return dataset
+
+    def list_tables(self, dataset_id):
+        return [
+            SimpleNamespace(
+                table_id=table_id.rsplit(".", 1)[-1], reference=table_id, expires=t.expires
+            )
+            for table_id, t in self.tables.items()
+        ]
 
     def get_table(self, table_id):
         if table_id not in self.tables:
@@ -52,7 +69,8 @@ class FakeClient:
         self.deleted.append(table_id)
 
     def update_table(self, table, fields):
-        assert fields == ["labels"]
+        self.table_updates.append((table.table_id, fields))
+        return table
 
     def load_table_from_file(self, handle, table_id, job_config, location):
         payload = handle.read()
@@ -61,7 +79,7 @@ class FakeClient:
         if self.load_errors:
             return FakeJob(error=self.load_errors.pop(0))
         rows = payload.count(b"\n") - 1 + self.row_delta
-        self.tables[table_id] = SimpleNamespace(labels={}, expires=None, num_rows=rows)
+        self.tables[table_id] = fake_table(table_id, num_rows=rows)
         return FakeJob(output_rows=rows)
 
     def load_table_from_json(self, rows, table_id, job_config, location):
@@ -69,8 +87,70 @@ class FakeClient:
         return FakeJob()
 
 
-def make_loader(client: FakeClient) -> BigQueryLoader:
-    return BigQueryLoader("demo-project", "US", "raw", client=client, sleep=lambda _: None)
+def fake_table(table_id: str, expires=None, num_rows: int = 0, labels=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        table_id=table_id.rsplit(".", 1)[-1],
+        labels=labels or {},
+        expires=expires,
+        num_rows=num_rows,
+    )
+
+
+def make_loader(client: FakeClient, expiration_days: int | None = None) -> BigQueryLoader:
+    return BigQueryLoader(
+        "demo-project",
+        "US",
+        "raw",
+        expiration_days=expiration_days,
+        client=client,
+        sleep=lambda _: None,
+        clock=lambda: NOW,
+    )
+
+
+def test_new_dataset_gets_default_expirations():
+    client = FakeClient()
+
+    make_loader(client, expiration_days=60).ensure_ready()
+
+    created = client.datasets[0]
+    assert created.default_table_expiration_ms == 60 * 86_400_000
+    assert created.default_partition_expiration_ms == 60 * 86_400_000
+    assert client.dataset_updates == []
+
+
+def test_existing_dataset_without_defaults_gets_them():
+    client = FakeClient()
+    client.existing_dataset = bigquery.Dataset("demo-project.raw")
+
+    make_loader(client, expiration_days=60).ensure_ready()
+
+    assert client.dataset_updates == [list(EXPIRATION_FIELDS)]
+    assert client.existing_dataset.default_table_expiration_ms == 60 * 86_400_000
+
+
+def test_tables_without_expiry_get_one_and_others_are_untouched():
+    client = FakeClient()
+    later = NOW + timedelta(days=10)
+    client.tables["demo-project.raw.old_s01"] = fake_table("demo-project.raw.old_s01")
+    client.tables["demo-project.raw.new_s01"] = fake_table("demo-project.raw.new_s01", later)
+
+    make_loader(client, expiration_days=60).ensure_ready()
+
+    assert client.table_updates == [("old_s01", ["expires"])]
+    assert client.tables["demo-project.raw.old_s01"].expires == NOW + timedelta(days=60)
+    assert client.tables["demo-project.raw.new_s01"].expires == later
+
+
+def test_no_expiry_setting_leaves_dataset_and_tables_alone():
+    client = FakeClient()
+    client.existing_dataset = bigquery.Dataset("demo-project.raw")
+    client.tables["demo-project.raw.old_s01"] = fake_table("demo-project.raw.old_s01")
+
+    make_loader(client).ensure_ready()
+
+    assert client.dataset_updates == []
+    assert client.table_updates == []
 
 
 @pytest.fixture
