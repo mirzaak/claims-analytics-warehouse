@@ -46,29 +46,71 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--force", action="store_true", help="Reload files that are unchanged.")
     run.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
+
+    check = commands.add_parser(
+        "check-row-counts",
+        help="Fail when a key table is empty or its row count changed too much since the last run.",
+    )
+    check.add_argument(
+        "--max-change",
+        type=float,
+        default=0.10,
+        help="Largest allowed change as a share of the previous count. Default: 0.10.",
+    )
+    check.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     return parser
 
 
-def build_loader(settings: Settings) -> WarehouseLoader:
+def _with_google_credentials(build):
     from google.auth.exceptions import DefaultCredentialsError
 
-    from claims_ingest.bigquery_loader import BigQueryLoader
-
-    project = settings.require_project_id()
     if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
     try:
-        return BigQueryLoader(
-            project,
-            settings.gcp_location,
-            settings.raw_dataset,
-            expiration_days=settings.raw_expiration_days,
-        )
+        return build()
     except DefaultCredentialsError as exc:
         raise ConfigError(
             "Google credentials were not found. Set GOOGLE_APPLICATION_CREDENTIALS in .env "
             "to the path of your service account key."
         ) from exc
+
+
+def build_loader(settings: Settings) -> WarehouseLoader:
+    from claims_ingest.bigquery_loader import BigQueryLoader
+
+    project = settings.require_project_id()
+    return _with_google_credentials(
+        lambda: BigQueryLoader(
+            project,
+            settings.gcp_location,
+            settings.raw_dataset,
+            expiration_days=settings.raw_expiration_days,
+        )
+    )
+
+
+def check_row_counts(settings: Settings, max_change: float) -> int:
+    import uuid
+
+    from claims_ingest.row_counts import BigQueryRowCountStore, run_check
+
+    project = settings.require_project_id()
+    store = _with_google_credentials(
+        lambda: BigQueryRowCountStore(
+            project, settings.gcp_location, expiration_days=settings.raw_expiration_days
+        )
+    )
+    results = run_check(store, uuid.uuid4().hex, max_change)
+
+    print(f"\n{'table':<34}{'previous':>12}{'current':>12}  result")
+    for result in results:
+        previous = "-" if result.previous is None else f"{result.previous:,}"
+        outcome = "OK" if result.problem is None else f"FAIL: {result.problem}"
+        print(f"{result.table_name:<34}{previous:>12}{result.current:>12,}  {outcome}")
+    failures = [result for result in results if result.problem]
+    for result in failures:
+        print(f"ROW COUNT ANOMALY {result.table_name}: {result.problem}", file=sys.stderr)
+    return EXIT_FILE_FAILED if failures else EXIT_OK
 
 
 def print_summary(summary: RunSummary) -> None:
@@ -91,6 +133,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         settings = Settings.from_env()
+        if args.command == "check-row-counts":
+            if not 0 < args.max_change < 1:
+                raise ConfigError("--max-change must be between 0 and 1, such as 0.10.")
+            return check_row_counts(settings, args.max_change)
         sources = select_sources(args.sample or [1], args.only)
         loader = None if args.dry_run else build_loader(settings)
         summary = run_pipeline(sources, settings, loader, force=args.force)
