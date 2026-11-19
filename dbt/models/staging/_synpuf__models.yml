@@ -1,0 +1,158 @@
+version: 2
+
+models:
+  - name: stg_synpuf__beneficiaries
+    description: >
+      Grain: one row per member, coverage year and CMS sample. Yearly beneficiary
+      summaries with typed dates, coverage month counts, chronic condition flags and
+      annual payment totals.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [member_id, coverage_year, synpuf_sample]
+    columns:
+      - name: member_id
+        description: Synthetic beneficiary ID (DESYNPUF_ID).
+        data_tests: [not_null]
+      - name: coverage_year
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [2008, 2009, 2010]
+                quote: false
+      - name: birth_date
+        data_tests: [not_null]
+      - name: sex_code
+        description: 1 male, 2 female.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['1', '2']
+      - name: race_code
+        description: 1 white, 2 black, 3 other, 5 Hispanic.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['1', '2', '3', '5']
+      - name: has_esrd
+        description: End-stage renal disease indicator.
+        data_tests: [not_null]
+      - name: part_a_coverage_months
+        data_tests: &coverage_months
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 12
+      - name: part_b_coverage_months
+        data_tests: *coverage_months
+      - name: hmo_coverage_months
+        data_tests: *coverage_months
+      - name: part_d_coverage_months
+        data_tests: *coverage_months
+      - name: has_heart_failure
+        data_tests: [not_null]
+      - name: has_diabetes
+        data_tests: [not_null]
+
+  - name: stg_synpuf__inpatient_claims
+    description: >
+      Grain: one row per inpatient claim segment and CMS sample. Claim-level payment
+      only. Diagnosis, procedure and HCPCS codes are wide columns.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [claim_id, claim_segment, synpuf_sample]
+    columns: &institutional_columns
+      - name: claim_id
+        data_tests: [not_null]
+      - name: claim_segment
+        data_tests: [not_null]
+      - name: member_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_synpuf__beneficiaries')
+                field: member_id
+      - name: claim_from_date
+        description: Missing for a few source claims. Reported as a warning, not dropped.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: claim_payment_amount
+        description: Medicare claim payment. A few source claims are negative.
+        data_tests: [not_null]
+
+  - name: stg_synpuf__outpatient_claims
+    description: >
+      Grain: one row per outpatient claim segment and CMS sample. Claim-level payment
+      only. Diagnosis, procedure and HCPCS codes are wide columns.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [claim_id, claim_segment, synpuf_sample]
+    columns: *institutional_columns
+
+  - name: stg_synpuf__carrier_claims
+    description: >
+      Grain: one row per carrier (professional) claim and CMS sample, files A and B
+      combined. Up to 13 lines per claim, held in columns suffixed _1 to _13.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [claim_id, synpuf_sample]
+    columns:
+      - name: claim_id
+        data_tests: [not_null]
+      - name: member_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_synpuf__beneficiaries')
+                field: member_id
+      - name: claim_from_date
+        data_tests: [not_null]
+      - name: line_payment_amount_1
+        description: Line 1 Medicare payment. Every carrier claim has at least one line.
+        data_tests: [not_null]
+
+  - name: stg_synpuf__prescription_drug_events
+    description: >
+      Grain: one row per prescription fill and CMS sample. The source has no drug name
+      or brand flag, only the product code.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [pde_id, synpuf_sample]
+      - dbt_utils.expression_is_true:
+          name: ndc_code_has_11_characters
+          arguments:
+            expression: "length(ndc_code) = 11"
+          config:
+            severity: warn
+    columns:
+      - name: pde_id
+        data_tests: [not_null]
+      - name: member_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_synpuf__beneficiaries')
+                field: member_id
+      - name: service_date
+        data_tests: [not_null]
+      - name: ndc_code
+        description: >
+          National Drug Code. Almost all values have 11 digits; a few source values are
+          not NDCs and are reported as a warning.
+        data_tests: [not_null]
+      - name: days_supply
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
