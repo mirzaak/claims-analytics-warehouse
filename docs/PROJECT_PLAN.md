@@ -2,7 +2,7 @@
 
 Status: Step 1 (ingestion) is complete. Sample 1 is loaded into BigQuery, and a second run loaded nothing new.
 
-Open question: the `claims-warehouse` project has billing enabled, so it is not the BigQuery sandbox. DML works and tables do not expire. Decisions D1, D2 and D10 assumed the sandbox and need a final choice.
+The `claims-warehouse` project runs in the BigQuery sandbox with billing disabled, so the project stays free. Billing was briefly linked during setup and was removed on 2026-11-19.
 
 ## Goal
 
@@ -81,7 +81,7 @@ If time runs short, cut in this order. Tests and docs are never cut.
 
 Each of these can change the design.
 
-1. **Old-date partitions (resolved for this project).** `scripts/check_partition_expiry.py` loaded 2008, 2009, 2010 and current dates into date-partitioned and integer-range tables. All rows survived, because this billing-enabled project sets no partition expiration. A sandbox project was not tested.
+1. **Old-date partitions (resolved).** `scripts/check_partition_expiry.py` loaded 2008, 2009, 2010 and current dates into test tables in the sandbox. The date-partitioned table dropped every 2008 to 2010 row at once and kept only the current row, and the sandbox refused to remove the partition expiry. The integer-range table on `service_year_month` kept all rows. D2 is confirmed.
 2. **2010 beneficiary file (resolved).** The CMS link is named `sample_20`, but the archive contains `DE1_0_2010_Beneficiary_Summary_File_Sample_1.csv`. All 112,754 of its members also appear in the 2009 Sample 1 file, so it is safe to load.
 3. **Data volume (partly resolved).** Sample 1 is 11,494,963 rows and 3.12 GB uncompressed. The 10% sample keeps 1,152,481 rows. Bytes scanned per rebuild can only be measured once dbt runs.
 
@@ -90,7 +90,7 @@ Each of these can change the design.
 | ID | Decision | Why |
 |---|---|---|
 | D1 | Build SCD2 `dim_member` from the 2008, 2009 and 2010 beneficiary files with a window-function model. Also run a real `dbt snapshot` on Snowflake and compare the results. | The BigQuery sandbox does not support DML, and snapshots must update existing rows. |
-| D2 | Partition the largest BigQuery fact by integer `service_year_month` and cluster by member key, unless spike 1 shows date partitions survive. | Sandbox partitions expire after 60 days, and BigQuery expires old-dated partitions immediately on load. All claim dates are 2008 to 2010. |
+| D2 | Partition the largest BigQuery fact by integer `service_year_month` and cluster by member key. | Spike 1 showed the sandbox deletes 2008 to 2010 date partitions immediately on load, while integer-range partitions keep every row. |
 | D3 | Use the CMS sample number as the incremental unit. Beneficiary files add a year within a sample. | Claim files cover 2008 to 2010 together, so they cannot be loaded one year at a time. |
 | D4 | Derive `fact_member_month` from yearly coverage month counts and document the assumption. Months are assigned from January forward and stop at death date. | SynPUF has total coverage months per year, not monthly enrollment flags. The "enrolled in month of service" rule is therefore approximate. |
 | D5 | Fact grain is one row per carrier line, and one row per claim segment for inpatient and outpatient. Allowed amount is null for inpatient and outpatient. | Only carrier has line-level paid and allowed amounts. Inpatient and outpatient have claim-level payment only, and allocating it would invent data. |
@@ -98,7 +98,7 @@ Each of these can change the design.
 | D7 | Keep a deterministic 10% sample of members, the same members in every file. Revisit the rate after measuring bytes scanned per rebuild. | It protects the 10 GiB storage limit and 1 TiB monthly query limit while keeping every member's claims complete. |
 | D8 | Load the CMS `sample_20` link as the Sample 1 2010 beneficiary file. | Its contents were checked and match Sample 1 (spike 2). |
 | D9 | Load each source file to its own raw table with a replace-on-load job on BigQuery. Use a delete and `COPY` in one transaction on Snowflake. | Replace-on-load keeps re-runs idempotent without DML. |
-| D10 | Record every pipeline run in an append-only `_ingest_runs` table and point freshness checks at it. Reload raw tables before they reach 60 days. | Source files never change, so `_loaded_at` alone would look stale, and sandbox tables would otherwise expire. |
+| D10 | Record every pipeline run in an append-only `_ingest_runs` table and point freshness checks at it. Give the raw dataset and every raw table a 60-day expiry, and reload tables 14 days before they expire. | Source files never change, so `_loaded_at` alone would look stale. The sandbox rejects writes to any table without an expiry, and expired tables are deleted. |
 | D11 | Use a Discord webhook for alerts and key-pair auth for Snowflake. | Both are free and keep passwords out of CI. |
 
 ## Accounts and secrets needed

@@ -52,7 +52,7 @@ A dry run downloads and prepares every file, then prints row counts. It needs no
 | Idempotent | A batch ID is a hash of the file contents and sample rate. A table that already holds that batch is skipped. |
 | No duplicates | Each load job replaces the whole table, and a failed job leaves the old table in place. |
 | Incremental | Each file has its own table, such as `carrier_claims_a_s01`, so a new sample adds tables and leaves others alone. |
-| Sandbox expiry | A table within `RAW_REFRESH_DAYS` (default 14) of its 60-day expiry is dropped and reloaded. |
+| Sandbox expiry | The sandbox rejects writes to tables that never expire. Each run gives the dataset and any table without an expiry a `RAW_EXPIRATION_DAYS` (default 60) expiry. A table within `RAW_REFRESH_DAYS` (default 14) of expiring is dropped and reloaded. |
 | Retries | Network errors, rate limits and server errors back off exponentially. Permanent errors fail at once. |
 | Failure handling | One failed file does not stop the others. The command exits with a non-zero code. |
 | Audit trail | Every file outcome is appended to `raw._ingest_runs`, which freshness checks will use. |
