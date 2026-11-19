@@ -143,6 +143,37 @@ Top diagnoses by cost: coronary atherosclerosis (414.01), septicemia (038.9), re
 - **Drug-level spend is flat.** Sample 1 has 196,584 distinct NDCs, 70,500 of them filled once, and the top drugs tie. SynPUF scrambles drug detail, so `mart_pharmacy_spend` shows the mechanics, not real drug rankings.
 - **Code descriptions.** ICD-9 titles come from the CMS Version 32 files (`scripts/build_icd9_seeds.py`). Diagnoses with a title cover 97.3% of diagnosis-attributed cost. The 407 codes without one are mostly non-billable category codes, such as `0058`. All 600 five-character values in SynPUF's ICD-9 procedure fields lack titles, because real ICD-9-CM procedure codes have at most four digits. HCPCS codes have no titles, because CPT descriptions are copyrighted by the AMA.
 
+## Data quality
+
+Business rules flag records and keep them. Nothing is dropped.
+
+| Part | Where | What it does |
+|---|---|---|
+| Rule list | `macros/data_quality.sql` | Each rule's name, fact, flag column, reason and maximum violation rate, defined once |
+| Flags | `dq_` columns and `has_dq_issue` on both facts | Marks each failing record |
+| Quarantine | `quality.dq_quarantine` | One row per failing record and rule, with the reason |
+| Rule summary | `quality.dq_rule_summary` | Violation count and rate per rule against its threshold |
+| Threshold test | `dq_rule_violation_rate_within_threshold` | Fails the build when any rule goes above its threshold |
+| Reconciliation | `tests/singular/assert_raw_paid_reconciles_to_facts.sql` | Raw paid per claim type, summed straight from the source tables, equals the facts within one cent |
+| Reconciliation | `tests/singular/assert_pmpm_mart_reconciles_to_facts.sql` | PMPM mart cost plus the cost it leaves out equals the facts within one cent |
+
+Thresholds sit at about two to three times the rate measured on Sample 1, or at zero for rules that never fired. That way the known quirks of the synthetic data pass, but a real regression fails the build.
+
+| Rule | Fact | Violations | Rate | Threshold |
+|---|---|---:|---:|---:|
+| Negative paid amount | medical | 246 | 0.02% | 0.1% |
+| Missing service date | medical | 1,175 | 0.12% | 0.5% |
+| Service start after end | medical | 0 | 0% | 0% |
+| Member not enrolled in service month | medical | 6,919 | 0.68% | 2% |
+| Negative drug cost | pharmacy | 0 | 0% | 0% |
+| Patient pay above gross drug cost | pharmacy | 29,183 | 5.2% | 10% |
+| Zero days supply | pharmacy | 11,763 | 2.1% | 5% |
+| Member not enrolled in Part D month | pharmacy | 8,482 | 1.5% | 3% |
+
+The enrollment rules rely on the January-forward month assumption (D4), so some of those flags are an artifact of the source reporting month counts rather than monthly enrollment.
+
+**Proof the checks work:** running with `--vars '{dq_max_rate_scale: 0}'` sets every threshold to zero, and the threshold test failed on exactly the 6 rules that have violations. Raw and fact totals match to the cent: inpatient $63,632,290, outpatient $22,504,820, carrier $41,236,860 and pharmacy gross cost $34,474,750.
+
 ## Tests
 
 | Check | Where | What it catches |
@@ -155,7 +186,7 @@ Top diagnoses by cost: coronary atherosclerosis (414.01), septicemia (038.9), re
 
 Star schema tests add primary keys on every fact and dimension, a relationship test for every fact foreign key, row-count checks between facts and their inputs, and two SCD Type 2 checks: one current version per member and no overlapping versions.
 
-The latest full build passed 135 checks with 3 warnings. The warnings are real source issues, reported and kept rather than dropped:
+The latest full build passed 181 checks with 3 warnings. The warnings are real source issues, reported and kept rather than dropped:
 
 | Warning | Rows |
 |---|---:|
