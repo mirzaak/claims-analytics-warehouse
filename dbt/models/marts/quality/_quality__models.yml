@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: dq_quarantine
+    description: >
+      Grain: one row per failing record and rule. Records are flagged in the facts and kept;
+      this table lists every failure with its reason. Rules are defined in
+      macros/data_quality.sql.
+    columns:
+      - name: quarantine_key
+        data_tests: [unique, not_null]
+      - name: rule_name
+        data_tests: [not_null]
+      - name: failure_reason
+        data_tests: [not_null]
+
+  - name: dq_rule_summary
+    description: >
+      Grain: one row per data-quality rule, with violation count, rate and threshold for the
+      latest build. The build fails when any rule is above its threshold.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: dq_rule_violation_rate_within_threshold
+          arguments:
+            expression: "is_within_threshold"
+    columns:
+      - name: rule_name
+        data_tests: [unique, not_null]
