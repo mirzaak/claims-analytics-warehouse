@@ -21,8 +21,9 @@
 
 with lines as (
     select * from {{ ref('int_medical_claim_lines') }}
-)
+),
 
+enriched as (
 select
     {{ dbt_utils.generate_surrogate_key([
         'lines.claim_type', 'lines.claim_id', 'lines.claim_segment',
@@ -48,6 +49,22 @@ select
     lines.paid_amount,
     lines.allowed_amount,
     lines.primary_payer_paid_amount,
-    lines.beneficiary_responsibility_amount
+    lines.beneficiary_responsibility_amount,
+    -- Data-quality flags. Rules and thresholds live in macros/data_quality.sql.
+    coalesce(lines.paid_amount < 0, false) as dq_negative_paid_amount,
+    lines.service_from_date is null as dq_missing_service_date,
+    coalesce(lines.service_from_date > lines.service_thru_date, false) as dq_service_date_after_thru_date,
+    lines.service_from_date is not null
+        and not coalesce(enrollment.is_enrolled_medical, false) as dq_member_not_enrolled_in_month
 from lines
 {{ join_member_versions('lines', 'lines.service_from_date') }}
+left join {{ ref('fact_member_month') }} as enrollment
+    on enrollment.member_id = lines.member_id
+    and enrollment.synpuf_sample = lines.synpuf_sample
+    and enrollment.year_month = {{ year_month('lines.service_from_date') }}
+)
+
+select
+    *,
+    {{ dq_any_issue('medical_claim_line') }} as has_dq_issue
+from enriched
