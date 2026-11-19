@@ -1,0 +1,173 @@
+name: Pipeline
+
+# Daily: ingest -> source freshness -> dbt build (models and tests) -> row-count check
+# -> publish dbt docs. Any failed step sends an alert with the step name and run link.
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # 06:17 UTC daily, off the top of the hour when runners are busiest
+  workflow_dispatch:
+    inputs:
+      force_failure:
+        description: Force the data-quality threshold test to fail, to test alerting
+        type: boolean
+        default: false
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_LOCATION: US
+  MEMBER_SAMPLE_PCT: "10"
+  DBT_PROJECT_DIR: dbt
+  DBT_PROFILES_DIR: dbt
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            ingestion/pyproject.toml
+            requirements-dbt.txt
+
+      - name: Install
+        id: install
+        run: pip install ./ingestion -r requirements-dbt.txt
+
+      - name: Configure credentials
+        id: config
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -z "$GCP_PROJECT_ID" ]; then
+            echo "::error::Repository variable GCP_PROJECT_ID is not set."
+            exit 1
+          fi
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "::error::Repository secret GCP_SA_KEY is not set."
+            exit 1
+          fi
+          key_file="$RUNNER_TEMP/gcp-key.json"
+          printf '%s' "$GCP_SA_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$key_file" >> "$GITHUB_ENV"
+
+      - name: Restore downloaded source files
+        uses: actions/cache@v4
+        with:
+          path: data/downloads
+          key: synpuf-downloads-${{ hashFiles('ingestion/src/claims_ingest/catalog.py') }}
+
+      - name: Ingest
+        id: ingest
+        run: claims-ingest run --sample 1
+
+      - name: Install dbt packages
+        id: deps
+        run: dbt deps
+
+      - name: Source freshness
+        id: freshness
+        run: dbt source freshness
+
+      - name: dbt build
+        id: build
+        env:
+          FORCE_FAILURE: ${{ inputs.force_failure }}
+        run: |
+          if [ "$FORCE_FAILURE" = "true" ]; then
+            echo "::warning::Forcing data-quality thresholds to zero to test alerting."
+            dbt build --vars '{dq_max_rate_scale: 0}'
+          else
+            dbt build
+          fi
+
+      - name: Row-count anomaly check
+        id: row_counts
+        run: claims-ingest check-row-counts
+
+      - name: Generate dbt docs
+        id: docs
+        run: |
+          dbt docs generate --static
+          mkdir -p site
+          cp dbt/target/static_index.html site/index.html
+
+      - name: Upload docs site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Keep dbt results for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-results
+          path: |
+            dbt/target/run_results.json
+            dbt/target/sources.json
+            dbt/logs/dbt.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Send failure alert
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FAILED_STEP: >-
+            ${{
+              steps.install.outcome == 'failure' && 'Install' ||
+              steps.config.outcome == 'failure' && 'Configure credentials' ||
+              steps.ingest.outcome == 'failure' && 'Ingest' ||
+              steps.deps.outcome == 'failure' && 'Install dbt packages' ||
+              steps.freshness.outcome == 'failure' && 'Source freshness' ||
+              steps.build.outcome == 'failure' && 'dbt build' ||
+              steps.row_counts.outcome == 'failure' && 'Row-count anomaly check' ||
+              steps.docs.outcome == 'failure' && 'Generate dbt docs' ||
+              'Workflow setup'
+            }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          TRIGGER: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: python scripts/send_alert.py
+
+  publish-docs:
+    needs: pipeline
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy dbt docs to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - uses: actions/checkout@v4
+        if: failure()
+
+      - name: Send failure alert
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FAILED_STEP: Publish dbt docs
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          TRIGGER: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: python3 scripts/send_alert.py
