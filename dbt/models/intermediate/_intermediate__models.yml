@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: int_member_coverage_versions
+    description: >
+      Grain: one row per member coverage version. SCD Type 2 history built from the yearly
+      beneficiary files. A version starts when state, county, ESRD status or any coverage
+      month count changes, or when a coverage year is missing.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [member_id, synpuf_sample, version_number]
+
+  - name: int_medical_claim_lines
+    description: >
+      Grain: one row per medical claim line across inpatient, outpatient and carrier claims.
+      Carrier lines are unpivoted from 13 repeated column sets. Feeds fact_medical_claim_line
+      and dim_provider.
+
+  - name: int_diagnosis_codes
+    description: "Grain: one row per distinct ICD-9-CM diagnosis code used in any medical claim column."
+    columns:
+      - name: diagnosis_code
+        data_tests: [unique, not_null]
+
+  - name: int_procedure_codes
+    description: "Grain: one row per distinct procedure code and code system (HCPCS or ICD-9-CM procedure)."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [procedure_code_system, procedure_code]
