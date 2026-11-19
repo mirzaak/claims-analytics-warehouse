@@ -22,8 +22,8 @@ jobs:
           cache: pip
           cache-dependency-path: ingestion/pyproject.toml
       - run: pip install ".[dev]"
-      - run: ruff check src tests
-      - run: ruff format --check src tests
+      - run: ruff check src tests ../scripts
+      - run: ruff format --check src tests ../scripts
       - run: pytest
 
   dbt:

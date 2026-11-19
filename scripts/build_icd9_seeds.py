@@ -25,9 +25,7 @@ SEEDS = ROOT / "dbt" / "seeds"
 
 
 def read_titles(archive: zipfile.ZipFile, pattern: str) -> dict[str, str]:
-    names = [
-        name for name in archive.namelist() if re.search(pattern, name, re.IGNORECASE)
-    ]
+    names = [name for name in archive.namelist() if re.search(pattern, name, re.IGNORECASE)]
     if len(names) != 1:
         raise SystemExit(f"Expected one file matching {pattern}, found {names}")
     titles = {}
@@ -40,9 +38,7 @@ def read_titles(archive: zipfile.ZipFile, pattern: str) -> dict[str, str]:
     return titles
 
 
-def write_seed(
-    path: Path, key: str, short: dict[str, str], long: dict[str, str]
-) -> int:
+def write_seed(path: Path, key: str, short: dict[str, str], long: dict[str, str]) -> int:
     codes = sorted(set(short) | set(long))
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\n")

@@ -63,12 +63,8 @@ def main() -> None:
     dataset.location = location
     dataset = client.create_dataset(dataset, exists_ok=True)
     print(f"dataset default table expiration ms: {dataset.default_table_expiration_ms}")
-    print(
-        f"dataset default partition expiration ms: {dataset.default_partition_expiration_ms}"
-    )
-    print(
-        f"rows loaded into each table: {[row['service_date'] for row in sample_rows()]}\n"
-    )
+    print(f"dataset default partition expiration ms: {dataset.default_partition_expiration_ms}")
+    print(f"rows loaded into each table: {[row['service_date'] for row in sample_rows()]}\n")
 
     try:
         by_date = create(
@@ -76,9 +72,7 @@ def main() -> None:
             f"{dataset_id}.by_date",
             time_partitioning=bigquery.TimePartitioning(field="service_date"),
         )
-        print(
-            f"A. date partitions, defaults: expiration ms {by_date.partition_expiration}"
-        )
+        print(f"A. date partitions, defaults: expiration ms {by_date.partition_expiration}")
         print(f"   rows kept: {load_and_count(client, by_date)}")
 
         try:
@@ -86,9 +80,8 @@ def main() -> None:
                 f"ALTER TABLE `{dataset_id}.by_date` SET OPTIONS (partition_expiration_days = NULL)"
             ).result()
             refreshed = client.get_table(f"{dataset_id}.by_date")
-            print(
-                f"B. date partitions, expiration removed: expiration ms {refreshed.partition_expiration}"
-            )
+            expiration = refreshed.partition_expiration
+            print(f"B. date partitions, expiration removed: expiration ms {expiration}")
             print(f"   rows kept: {load_and_count(client, refreshed)}")
         except GoogleAPICallError as exc:
             print(f"B. removing partition expiration failed: {exc.message}")
