@@ -1,0 +1,160 @@
+version: 2
+
+models:
+  # Dimensions
+
+  - name: dim_date
+    description: "Grain: one row per calendar day, 2007 to 2011, plus an unknown row (date_key -1)."
+    columns:
+      - name: date_key
+        description: Integer yyyymmdd.
+        data_tests: [unique, not_null]
+
+  - name: dim_member
+    description: >
+      Grain: one row per member coverage version (SCD Type 2). Facts join the version whose
+      valid_from to valid_to range contains the service date.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [member_id, synpuf_sample, valid_from]
+      - dbt_utils.unique_combination_of_columns:
+          name: dim_member_one_current_version_per_member
+          arguments:
+            combination_of_columns: [member_id, synpuf_sample]
+          config:
+            where: is_current
+      - dbt_utils.expression_is_true:
+          name: dim_member_valid_from_before_valid_to
+          arguments:
+            expression: "valid_from <= valid_to"
+    columns:
+      - name: member_key
+        data_tests: [unique, not_null]
+      - name: member_id
+        data_tests: [not_null]
+      - name: valid_to
+        description: 9999-12-31 for a member's open version; Dec 31 of the last coverage year otherwise.
+
+  - name: dim_provider
+    description: "Grain: one row per provider ID and type (institution or physician), plus an unknown row."
+    columns:
+      - name: provider_key
+        data_tests: [unique, not_null]
+      - name: provider_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [institution, physician, Unknown]
+
+  - name: dim_diagnosis
+    description: "Grain: one row per ICD-9-CM diagnosis code, plus an unknown row."
+    columns:
+      - name: diagnosis_key
+        data_tests: [unique, not_null]
+
+  - name: dim_procedure
+    description: "Grain: one row per procedure code and code system, plus an unknown row."
+    columns:
+      - name: procedure_key
+        data_tests: [unique, not_null]
+
+  - name: dim_drug
+    description: "Grain: one row per National Drug Code, plus an unknown row."
+    columns:
+      - name: drug_key
+        data_tests: [unique, not_null]
+
+  # Facts
+
+  - name: fact_medical_claim_line
+    description: >
+      Grain: one row per medical claim line. Carrier claims give one row per populated line;
+      inpatient and outpatient claims give one row per claim segment. Partitioned by
+      service_year_month (integer range) and clustered by member_key.
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: ref('int_medical_claim_lines')
+    columns:
+      - name: medical_claim_line_key
+        data_tests: [unique, not_null]
+      - name: claim_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [inpatient, outpatient, carrier]
+      - name: member_key
+        data_tests: &member_fk
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_member')
+                field: member_key
+      - name: provider_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_provider')
+                field: provider_key
+      - name: service_from_date_key
+        data_tests: &date_fk
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: service_thru_date_key
+        data_tests: *date_fk
+      - name: diagnosis_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_diagnosis')
+                field: diagnosis_key
+      - name: procedure_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_procedure')
+                field: procedure_key
+      - name: is_member_version_matched
+        description: >
+          False when no member version covers the service date, for example a missing
+          service date. The fact then uses the member's latest version.
+
+  - name: fact_pharmacy_claim
+    description: "Grain: one row per prescription fill. Clustered by member_key."
+    data_tests:
+      - dbt_utils.equal_rowcount:
+          arguments:
+            compare_model: ref('stg_synpuf__prescription_drug_events')
+    columns:
+      - name: pharmacy_claim_key
+        data_tests: [unique, not_null]
+      - name: member_key
+        data_tests: *member_fk
+      - name: drug_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_drug')
+                field: drug_key
+      - name: fill_date_key
+        data_tests: *date_fk
+
+  - name: fact_member_month
+    description: >
+      Grain: one row per member, sample and calendar month of each coverage year, with
+      medical and pharmacy enrollment flags. The PMPM denominator. Clustered by member_key.
+    columns:
+      - name: member_month_key
+        data_tests: [unique, not_null]
+      - name: member_key
+        data_tests: *member_fk
+      - name: month_date_key
+        data_tests: *date_fk
