@@ -95,6 +95,14 @@ GitHub disables scheduled workflows in public repositories after 60 days without
 
 ## Tables disappeared
 
-The BigQuery sandbox deletes tables 60 days after their last expiry was set. The daily run renews raw tables 14 days before expiry and rebuilds all dbt tables. If the schedule stopped for longer than that, tables can vanish.
+The BigQuery sandbox deletes every table at most 60 days after it was created, and it rejects any expiry beyond that, so an expiry can never be extended. Tables stay alive only by being recreated:
+
+| Tables | How they are kept |
+|---|---|
+| dbt models | Rebuilt by every `dbt build`, which resets their 60 days |
+| Raw source tables | Dropped and reloaded by ingestion 14 days before they expire |
+| `raw._ingest_runs`, `quality.row_count_history` | Append-only logs. They expire 60 days after creation and are recreated by the next run, which starts a fresh baseline. |
+
+If the schedule stopped for long enough, tables can vanish.
 
 **Fix:** run the pipeline. Ingestion reloads missing raw tables, and dbt rebuilds everything else.
