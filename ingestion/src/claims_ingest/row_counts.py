@@ -11,7 +11,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from google.api_core import exceptions as google_errors
 from google.cloud import bigquery
@@ -77,7 +77,6 @@ class BigQueryRowCountStore:
         project: str,
         location: str,
         *,
-        expiration_days: int | None = None,
         client: bigquery.Client | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -85,7 +84,6 @@ class BigQueryRowCountStore:
         self._client = client or bigquery.Client(project=project, location=location)
         self._project = project
         self._location = location
-        self._expiration_days = expiration_days or None
         self._sleep = sleep
         self._clock = clock
 
@@ -152,18 +150,13 @@ class BigQueryRowCountStore:
                 rows, self._history_id, job_config=config, location=self._location
             ).result()
 
+        # No expiry extension: the sandbox caps expiry at 60 days after the table was
+        # created, so the history table expires and is recreated, and the next run
+        # starts a fresh baseline.
         try:
             self._retry(append, f"append {HISTORY_TABLE}")
-            if self._expiration_days:
-                self._extend_expiry()
         except google_errors.GoogleAPICallError as exc:
             raise LoadError(f"Could not record row counts in {HISTORY_TABLE}: {exc}") from exc
-
-    def _extend_expiry(self) -> None:
-        """Keep the history from expiring while runs continue; the sandbox caps it at 60 days."""
-        table = self._retry(lambda: self._client.get_table(self._history_id), "read history")
-        table.expires = self._clock() + timedelta(days=self._expiration_days)
-        self._retry(lambda: self._client.update_table(table, ["expires"]), "extend history")
 
 
 def run_check(

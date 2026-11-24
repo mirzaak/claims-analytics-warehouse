@@ -95,11 +95,7 @@ def check_row_counts(settings: Settings, max_change: float) -> int:
     from claims_ingest.row_counts import BigQueryRowCountStore, run_check
 
     project = settings.require_project_id()
-    store = _with_google_credentials(
-        lambda: BigQueryRowCountStore(
-            project, settings.gcp_location, expiration_days=settings.raw_expiration_days
-        )
-    )
+    store = _with_google_credentials(lambda: BigQueryRowCountStore(project, settings.gcp_location))
     results = run_check(store, uuid.uuid4().hex, max_change)
 
     print(f"\n{'table':<34}{'previous':>12}{'current':>12}  result")

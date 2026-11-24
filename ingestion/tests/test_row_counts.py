@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -82,11 +81,10 @@ class FakeClient:
         return table
 
 
-def make_store(client, expiration_days=60):
+def make_store(client):
     return BigQueryRowCountStore(
         "demo",
         "US",
-        expiration_days=expiration_days,
         client=client,
         sleep=lambda _: None,
         clock=lambda: NOW,
@@ -107,7 +105,6 @@ def test_run_compares_with_history_and_records_current_counts():
     assert [r.problem is None for r in results] == [True, False]
     assert [row["row_count"] for row in client.appended] == [100, 50]
     assert {row["run_id"] for row in client.appended} == {"run1"}
-    assert client.history_table.expires == NOW + timedelta(days=60)
 
 
 def test_first_run_without_history_table_passes():
@@ -127,10 +124,11 @@ def test_missing_table_counts_as_empty():
     assert results[0].problem == "table is empty"
 
 
-def test_no_expiry_setting_leaves_history_expiry_alone():
+def test_recording_never_changes_the_history_expiry():
+    # The sandbox rejects expiries more than 60 days after a table's creation.
     client = FakeClient(counts={"marts.a": 10}, missing_history=True)
 
-    run_check(make_store(client, expiration_days=0), "run1", 0.1, tables=("marts.a",))
+    run_check(make_store(client), "run1", 0.1, tables=("marts.a",))
 
     assert client.expiry_updates == 0
 
