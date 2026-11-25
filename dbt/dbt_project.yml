@@ -16,6 +16,8 @@ vars:
   synpuf_samples: [1]
   # Multiplies every data-quality threshold. Set to 0 to force rules with violations to fail.
   dq_max_rate_scale: 1
+  # Coverage year fed to snap_member_coverage (Snowflake only). See scripts/replay_member_snapshot.sh.
+  snapshot_coverage_year: 2010
 
 seeds:
   claims_warehouse:
