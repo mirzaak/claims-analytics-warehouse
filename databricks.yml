@@ -1,0 +1,44 @@
+# Databricks Asset Bundle: deploys the bronze load job to a Databricks workspace.
+# Deploy: databricks bundle deploy   Run: databricks bundle run claims_bronze_load
+# Targets Databricks Free Edition, which only offers serverless compute.
+bundle:
+  name: claims_analytics_warehouse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for bronze tables.
+    default: workspace
+  schema:
+    description: Schema that holds the landing volume and bronze tables.
+    default: raw
+
+sync:
+  include:
+    - platforms/databricks/*.py
+  exclude:
+    - "**"
+
+resources:
+  jobs:
+    claims_bronze_load:
+      name: claims-bronze-load
+      max_concurrent_runs: 1
+      tasks:
+        - task_key: bronze_load
+          environment_key: default
+          spark_python_task:
+            python_file: platforms/databricks/bronze_load.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --schema
+              - ${var.schema}
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+
+targets:
+  free:
+    mode: development
+    default: true
