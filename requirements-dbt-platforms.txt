@@ -1,0 +1,4 @@
+# Adapters for the Snowflake and Databricks targets. CI only needs requirements-dbt.txt.
+-r requirements-dbt.txt
+dbt-snowflake==1.12.5
+dbt-databricks==1.13.1
