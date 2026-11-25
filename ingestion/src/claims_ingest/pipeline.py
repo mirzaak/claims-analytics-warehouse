@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from pathlib import Path
 
 import requests
 
@@ -15,7 +16,13 @@ from claims_ingest.catalog import SourceFile
 from claims_ingest.config import Settings
 from claims_ingest.download import download_file
 from claims_ingest.errors import IngestError
-from claims_ingest.models import RunRecord, RunStatus, TableState, WarehouseLoader
+from claims_ingest.models import (
+    PreparedFile,
+    RunRecord,
+    RunStatus,
+    TableState,
+    WarehouseLoader,
+)
 from claims_ingest.prepare import compute_batch_id, prepare_file
 
 logger = logging.getLogger(__name__)
@@ -179,3 +186,33 @@ def run_pipeline(
         "run_finished run_id=%s files=%d failed=%d", run_id, len(records), len(summary.failed)
     )
     return summary
+
+
+def export_sources(
+    sources: Iterable[SourceFile],
+    settings: Settings,
+    out_dir: Path,
+    *,
+    session: requests.Session | None = None,
+    clock: Clock = utc_now,
+) -> list[PreparedFile]:
+    """Write each source's load-ready file to out_dir/<table>/<table>__<batch_id>.csv.gz.
+
+    Each table folder keeps only the current batch, so a lakehouse job can load the
+    whole folder, and can tell from the file name whether the batch changed.
+    """
+    exported = []
+    for source in sources:
+        download_dir = settings.data_dir / "downloads" / f"sample_{source.sample:02d}"
+        download = download_file(source.url, download_dir / source.filename, session=session)
+        batch_id = compute_batch_id(download.sha256, settings.member_sample_pct)
+        table_dir = out_dir / source.table
+        prepared = prepare_file(
+            download.path, source, batch_id, settings.member_sample_pct, table_dir, clock()
+        )
+        for old in table_dir.glob("*.csv.gz"):
+            if old != prepared.path:
+                old.unlink()
+        logger.info("file_exported path=%s rows=%d", prepared.path, prepared.rows_written)
+        exported.append(prepared)
+    return exported
