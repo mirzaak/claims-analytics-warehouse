@@ -16,7 +16,7 @@
             'range': {'start': 200701, 'end': 201201, 'interval': 1}
         } if target.type == 'bigquery' else none
     ),
-    cluster_by=['member_key'],
+    cluster_by=bigquery_cluster_by(['member_key']),
 ) }}
 
 with lines as (

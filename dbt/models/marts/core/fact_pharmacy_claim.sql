@@ -2,7 +2,7 @@
 -- plan_paid_amount is derived as gross drug cost minus patient pay, because SynPUF does
 -- not report the plan's share directly.
 
-{{ config(cluster_by=['member_key']) }}
+{{ config(cluster_by=bigquery_cluster_by(['member_key'])) }}
 
 with fills as (
     select * from {{ ref('stg_synpuf__prescription_drug_events') }}

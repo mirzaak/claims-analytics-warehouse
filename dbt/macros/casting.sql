@@ -28,8 +28,16 @@
     safe.parse_date('%Y%m%d', {{ blank_to_null(column) }})
 {%- endmacro %}
 
-{% macro default__parse_yyyymmdd(column) -%}
+{% macro snowflake__parse_yyyymmdd(column) -%}
     try_to_date({{ blank_to_null(column) }}, 'YYYYMMDD')
+{%- endmacro %}
+
+{% macro databricks__parse_yyyymmdd(column) -%}
+    to_date(try_to_timestamp({{ blank_to_null(column) }}, 'yyyyMMdd'))
+{%- endmacro %}
+
+{% macro default__parse_yyyymmdd(column) -%}
+    {{ exceptions.raise_compiler_error("parse_yyyymmdd has no implementation for " ~ target.type) }}
 {%- endmacro %}
 
 {#- SynPUF flags use 1 for yes and 2 for no. -#}

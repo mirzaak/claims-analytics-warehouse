@@ -8,8 +8,24 @@
     date({{ year }}, {{ month }}, {{ day }})
 {%- endmacro %}
 
-{% macro default__date_from_parts(year, month, day) -%}
+{% macro snowflake__date_from_parts(year, month, day) -%}
     date_from_parts({{ year }}, {{ month }}, {{ day }})
+{%- endmacro %}
+
+{% macro databricks__date_from_parts(year, month, day) -%}
+    make_date({{ year }}, {{ month }}, {{ day }})
+{%- endmacro %}
+
+{% macro default__date_from_parts(year, month, day) -%}
+    {{ exceptions.raise_compiler_error("date_from_parts has no implementation for " ~ target.type) }}
+{%- endmacro %}
+
+{#-
+  Clustering keys only on BigQuery. On Snowflake, automatic clustering spends credits
+  continuously and gains nothing on tables this small; Databricks uses Delta defaults.
+-#}
+{% macro bigquery_cluster_by(columns) -%}
+    {{ return(columns if target.type == 'bigquery' else none) }}
 {%- endmacro %}
 
 {#- Integer yyyymmdd key. Missing dates map to -1, the unknown row in dim_date. -#}

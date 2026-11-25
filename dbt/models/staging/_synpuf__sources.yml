@@ -5,7 +5,8 @@ sources:
     description: >
       CMS DE-SynPUF synthetic Medicare files, loaded unchanged by the ingestion package.
       Every column is STRING. One table per source file and CMS sample.
-    database: "{{ env_var('GCP_PROJECT_ID') }}"
+    # The BigQuery project, Snowflake database or Databricks catalog of the active target.
+    database: "{{ target.database }}"
     schema: "{{ env_var('RAW_DATASET', 'raw') }}"
 
     tables:

@@ -1,13 +1,14 @@
 # Settings come from environment variables, so this file holds no secrets.
-# scripts/dbt.sh loads them from .env.
+# scripts/dbt.sh loads them from .env. Pick a warehouse with --target.
 claims_warehouse:
   target: dev
   outputs:
+    # BigQuery sandbox: the primary, scheduled target.
     dev:
       type: bigquery
       method: service-account
-      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
-      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS', '') }}"
+      project: "{{ env_var('GCP_PROJECT_ID', 'not-set') }}"
       dataset: "{{ env_var('DBT_DATASET', 'dbt_dev') }}"
       location: "{{ env_var('GCP_LOCATION', 'US') }}"
       threads: 4
@@ -16,3 +17,26 @@ claims_warehouse:
       job_retries: 2
       # Any single query that would scan more than 2 GB fails instead of running.
       maximum_bytes_billed: 2000000000
+
+    # Snowflake trial: key-pair auth for a service user, no password.
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', 'not-set') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', 'CLAIMS_SERVICE') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'CLAIMS_TRANSFORMER') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'CLAIMS_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'CLAIMS_WAREHOUSE') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'DBT_DEV') }}"
+      threads: 4
+      query_tag: claims_warehouse_dbt
+
+    # Databricks Free Edition: serverless SQL warehouse with Unity Catalog.
+    databricks:
+      type: databricks
+      host: "{{ env_var('DATABRICKS_HOST', 'not-set') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', 'not-set') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN', '') }}"
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'workspace') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'dbt_dev') }}"
+      threads: 4

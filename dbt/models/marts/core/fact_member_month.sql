@@ -4,7 +4,7 @@
 -- Medical enrollment uses the larger of Part A and Part B months; pharmacy uses Part D.
 -- The 0/1 member-month columns are the PMPM denominators.
 
-{{ config(cluster_by=['member_key']) }}
+{{ config(cluster_by=bigquery_cluster_by(['member_key'])) }}
 
 with member_years as (
     select
