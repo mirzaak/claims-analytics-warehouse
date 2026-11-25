@@ -7,15 +7,16 @@ import logging
 import os
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from claims_ingest.catalog import SUPPORTED_SAMPLES, select_sources
-from claims_ingest.config import Settings
+from claims_ingest.config import WAREHOUSES, Settings
 from claims_ingest.errors import ConfigError, IngestError
 from claims_ingest.models import WarehouseLoader
-from claims_ingest.pipeline import RunSummary, run_pipeline
+from claims_ingest.pipeline import RunSummary, export_sources, run_pipeline
 
 EXIT_OK = 0
 EXIT_FILE_FAILED = 1
@@ -45,7 +46,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Download and prepare, but skip the warehouse."
     )
     run.add_argument("--force", action="store_true", help="Reload files that are unchanged.")
+    run.add_argument(
+        "--warehouse",
+        choices=WAREHOUSES,
+        help="Warehouse to load. Default: WAREHOUSE_TARGET from .env, or bigquery.",
+    )
     run.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
+
+    export = commands.add_parser(
+        "export",
+        help="Write load-ready files (sampled, with metadata) to a folder, for example "
+        "to upload to a Databricks volume.",
+    )
+    export.add_argument("--sample", type=int, action="append", choices=SUPPORTED_SAMPLES)
+    export.add_argument("--only", action="append", metavar="SOURCE")
+    export.add_argument("--out", type=Path, default=Path("data/export"), help="Output folder.")
+    export.add_argument(
+        "--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR")
+    )
 
     check = commands.add_parser(
         "check-row-counts",
@@ -76,6 +94,11 @@ def _with_google_credentials(build):
 
 
 def build_loader(settings: Settings) -> WarehouseLoader:
+    if settings.warehouse == "snowflake":
+        from claims_ingest.snowflake_loader import SnowflakeLoader
+
+        return SnowflakeLoader.connect(settings.require_snowflake(), schema=settings.raw_dataset)
+
     from claims_ingest.bigquery_loader import BigQueryLoader
 
     project = settings.require_project_id()
@@ -94,6 +117,8 @@ def check_row_counts(settings: Settings, max_change: float) -> int:
 
     from claims_ingest.row_counts import BigQueryRowCountStore, run_check
 
+    if settings.warehouse != "bigquery":
+        raise ConfigError("check-row-counts supports BigQuery only.")
     project = settings.require_project_id()
     store = _with_google_credentials(lambda: BigQueryRowCountStore(project, settings.gcp_location))
     results = run_check(store, uuid.uuid4().hex, max_change)
@@ -134,6 +159,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise ConfigError("--max-change must be between 0 and 1, such as 0.10.")
             return check_row_counts(settings, args.max_change)
         sources = select_sources(args.sample or [1], args.only)
+        if args.command == "export":
+            exported = export_sources(sources, settings, args.out)
+            for prepared in exported:
+                print(f"{prepared.path}  rows={prepared.rows_written:,}")
+            return EXIT_OK
+        if args.warehouse:
+            settings = replace(settings, warehouse=args.warehouse)
         loader = None if args.dry_run else build_loader(settings)
         summary = run_pipeline(sources, settings, loader, force=args.force)
     except IngestError as exc:

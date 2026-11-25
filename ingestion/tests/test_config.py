@@ -6,6 +6,40 @@ from claims_ingest.config import Settings
 from claims_ingest.errors import ConfigError
 
 
+def test_unknown_warehouse_is_rejected():
+    with pytest.raises(ConfigError, match="WAREHOUSE_TARGET must be one of bigquery, snowflake"):
+        Settings.from_env({"WAREHOUSE_TARGET": "redshift"})
+
+
+def test_snowflake_needs_account_and_key():
+    with pytest.raises(ConfigError, match="SNOWFLAKE_ACCOUNT and SNOWFLAKE_PRIVATE_KEY_PATH"):
+        Settings.from_env({"WAREHOUSE_TARGET": "snowflake"}).require_snowflake()
+
+
+def test_snowflake_key_path_must_exist(tmp_path):
+    settings = Settings.from_env(
+        {"SNOWFLAKE_ACCOUNT": "org-acct", "SNOWFLAKE_PRIVATE_KEY_PATH": str(tmp_path / "no.p8")}
+    )
+
+    with pytest.raises(ConfigError, match="does not point to a file"):
+        settings.require_snowflake()
+
+
+def test_snowflake_defaults_match_the_setup_script(tmp_path):
+    key = tmp_path / "key.p8"
+    key.write_text("key")
+    settings = Settings.from_env(
+        {"SNOWFLAKE_ACCOUNT": "org-acct", "SNOWFLAKE_PRIVATE_KEY_PATH": str(key)}
+    ).require_snowflake()
+
+    assert (settings.user, settings.role, settings.warehouse, settings.database) == (
+        "CLAIMS_SERVICE",
+        "CLAIMS_TRANSFORMER",
+        "CLAIMS_WH",
+        "CLAIMS_WAREHOUSE",
+    )
+
+
 def test_defaults_apply_when_values_are_blank():
     settings = Settings.from_env({"MEMBER_SAMPLE_PCT": "", "GCP_PROJECT_ID": " "})
 
