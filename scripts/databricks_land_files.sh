@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Export load-ready files and upload them to the Databricks landing volume.
-# Needs the Databricks CLI, already authenticated (databricks auth login).
+# Needs the Databricks CLI, authenticated by DATABRICKS_HOST and DATABRICKS_TOKEN
+# (load .env first) or by a profile from databricks auth login.
 # Usage: scripts/databricks_land_files.sh [catalog] [schema]
 set -euo pipefail
 

@@ -12,11 +12,13 @@ variables:
     description: Schema that holds the landing volume and bronze tables.
     default: raw
 
+# Sync uploads git-tracked files only; .gitignore keeps data, keys and .env out.
 sync:
-  include:
-    - platforms/databricks/*.py
   exclude:
-    - "**"
+    - dbt/**
+    - ingestion/**
+    - docs/**
+    - scripts/**
 
 resources:
   jobs:
