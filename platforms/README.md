@@ -12,6 +12,23 @@ The same pipeline runs on three platforms. BigQuery is the scheduled, always-on 
 
 The same batch ID (a hash of the source file and sample rate) identifies a file on every platform, so loads can be compared across warehouses.
 
+## Results
+
+| | BigQuery | Databricks | Snowflake |
+|---|---|---|---|
+| Status | Runs daily | Run on November 28, 2026 | Not run yet: the trial signup did not complete |
+| Raw rows loaded | 1,152,481 | 1,152,481 | |
+| dbt build | 181 pass, 3 warn | 181 pass, 3 warn | |
+| Medical claim lines, paid total | 1,021,603 lines, $127,373,970 | Same | |
+| Pharmacy events, gross drug cost | 561,720 events, $34,474,750 | Same | |
+| Quarantined records | 57,768 | 57,768 | |
+| Medical PMPM, 2008 / 2009 / 2010 | $363.07 / $393.20 / $223.51 | Same | |
+| dbt build time | About 3 minutes in GitHub Actions | 2 minutes 14 seconds from a laptop | |
+
+The three warnings are the same source-data issues on both platforms: missing claim start dates and three malformed NDC codes. They are flagged, not dropped.
+
+The Snowflake loader and dbt target are covered by unit tests that use a fake connection, but they have not run against a real account.
+
 ## Snowflake
 
 ### One-time setup
@@ -56,14 +73,17 @@ scripts/dbt.sh test --target snowflake --select assert_snapshot_matches_window_f
 ### One-time setup
 
 1. Sign up for [Databricks Free Edition](https://www.databricks.com/learn/free-edition).
-2. Authenticate the CLI with your workspace URL:
-   ```bash
-   databricks auth login --host https://<your-workspace>.cloud.databricks.com
-   ```
-3. Create a personal access token (**Settings → Developer → Access tokens**). Open **SQL Warehouses → your warehouse → Connection details** for the HTTP path.
-4. In `.env`, set `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH` and `DATABRICKS_TOKEN`.
+2. Create a personal access token (**Settings → Developer → Access tokens**). Paste it straight into `.env`; never paste it into a chat or a commit.
+3. Open **SQL Warehouses → your warehouse → Connection details** for the HTTP path.
+4. In `.env`, set `DATABRICKS_HOST`, `DATABRICKS_HTTP_PATH` and `DATABRICKS_TOKEN`. The Databricks CLI and dbt both read these.
 
 ### Run
+
+Load `.env` into the shell first, so the Databricks CLI picks up the host and token:
+
+```bash
+set -a; source .env; set +a
+```
 
 ```bash
 scripts/databricks_land_files.sh
